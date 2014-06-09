@@ -145,49 +145,7 @@ func Apply(c *cgroups.Cgroup, pid int) (cgroups.ActiveCgroup, error) {
 	cgroup := props["ControlGroup"].(string)
 
 	if !c.AllowAllDevices {
-		// Atm we can't use the systemd device support because of two missing things:
-		// * Support for wildcards to allow mknod on any device
-		// * Support for wildcards to allow /dev/pts support
-		//
-		// The second is available in more recent systemd as "char-pts", but not in e.g. v208 which is
-		// in wide use. When both these are availalable we will be able to switch, but need to keep the old
-		// implementation for backwards compat.
-		//
-		// Note: we can't use systemd to set up the initial limits, and then change the cgroup
-		// because systemd will re-write the device settings if it needs to re-apply the cgroup context.
-		// This happens at least for v208 when any sibling unit is started.
-
-		mountpoint, err := cgroups.FindCgroupMountpoint("devices")
-		if err != nil {
-			return nil, err
-		}
-
-		initPath, err := cgroups.GetInitCgroupDir("devices")
-		if err != nil {
-			return nil, err
-		}
-
-		dir := filepath.Join(mountpoint, initPath, c.Parent, c.Name)
-
-		res.cleanupDirs = append(res.cleanupDirs, dir)
-
-		if err := os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
-			return nil, err
-		}
-
-		if err := ioutil.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0700); err != nil {
-			return nil, err
-		}
-
-		if err := writeFile(dir, "devices.deny", "a"); err != nil {
-			return nil, err
-		}
-
-		for _, dev := range c.AllowedDevices {
-			if err := writeFile(dir, "devices.allow", dev.GetCgroupAllowString()); err != nil {
-				return nil, err
-			}
-		}
+		initAllowedDevices(c, pid)
 	}
 
 	if len(cpuArgs) != 0 {
@@ -330,6 +288,68 @@ func joinFreezer(c *cgroups.Cgroup, pid int) (string, error) {
 	}
 
 	return path, nil
+}
+
+func initAllowedDevices(c *cgroups.Cgroup, pid int) error {
+	mountpoint, err := cgroups.FindCgroupMountpoint("devices")
+	if err != nil {
+		return err
+	}
+
+	initPath, err := cgroups.GetInitCgroupDir("devices")
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Join(mountpoint, initPath, c.Parent, c.Name)
+
+	if err := os.MkdirAll(dir, 0755); err != nil && !os.IsExist(err) {
+		return err
+	}
+
+	if err := ioutil.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0700); err != nil {
+		return err
+	}
+
+	return UpdateAllowedDevices(c, pid)
+}
+
+func UpdateAllowedDevices(c *cgroups.Cgroup, pid int) error {
+	// Atm we can't use the systemd device support because of two missing things:
+	// * Support for wildcards to allow mknod on any device
+	// * Support for wildcards to allow /dev/pts support
+	//
+	// The second is available in more recent systemd as "char-pts", but not in e.g. v208 which is
+	// in wide use. When both these are availalable we will be able to switch, but need to keep the old
+	// implementation for backwards compat.
+	//
+	// Note: we can't use systemd to set up the initial limits, and then change the cgroup
+	// because systemd will re-write the device settings if it needs to re-apply the cgroup context.
+	// This happens at least for v208 when any sibling unit is started.
+
+	mountpoint, err := cgroups.FindCgroupMountpoint("devices")
+	if err != nil {
+		return err
+	}
+
+	initPath, err := cgroups.GetInitCgroupDir("devices")
+
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Join(mountpoint, initPath, c.Parent, c.Name)
+
+	if err := writeFile(dir, "devices.deny", "a"); err != nil {
+		return err
+	}
+
+	for _, dev := range c.AllowedDevices {
+		if err := writeFile(dir, "devices.allow", dev.GetCgroupAllowString()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func getFreezerPath(c *cgroups.Cgroup) (string, error) {
