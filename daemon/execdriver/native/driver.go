@@ -151,12 +151,13 @@ func (d *driver) DevAdd(c *execdriver.Command, src string, dst string, perms str
 	if active == nil {
 		return fmt.Errorf("active container for %s does not exist", c.ID)
 	}
+
 	// Build a device from our info.
 	device, err := devices.GetDevice(src, perms)
-	device.Path = dst
 	if err != nil {
 		return err
 	}
+	device.Path = dst
 
 	// Update allowed devices in cgroups
 	active.container.Cgroups.AllowedDevices = append(active.container.Cgroups.AllowedDevices, device)
